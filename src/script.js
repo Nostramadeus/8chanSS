@@ -103,6 +103,7 @@
     autoHideHeaderScroll: false,
     customFavicon: false,
     faviconStyle: "default",
+    unreadFavicon: true,
     enableMascots: false,
     mascotOpacity: 30,
     mascotUrls: "",
@@ -291,6 +292,7 @@
             }
           ]
         },
+        { key: "unreadFavicon", label: "Unread Favicon", title: "Shows an unread or (You) icon in the tab when new posts arrive, like the tab title" },
         { head: "Thread Styling" },
         {
           key: "enableSidebar", label: "Enable Sidebar", sub: [
@@ -528,18 +530,20 @@
 
   var FAVICON_STYLES = ["default", "eight", "eight_dark", "pixel", "pixel_alt"];
   var FAVICON_DATA = {
-    default: __SS_FAV_DEFAULT_BASE__,
-    eight: __SS_FAV_EIGHT_BASE__,
-    eight_dark: __SS_FAV_EIGHT_DARK_BASE__,
-    pixel: __SS_FAV_PIXEL_BASE__,
-    pixel_alt: __SS_FAV_PIXEL_ALT_BASE__
+    default: { base: __SS_FAV_DEFAULT_BASE__, unread: __SS_FAV_DEFAULT_UNREAD__, notif: __SS_FAV_DEFAULT_NOTIF__ },
+    eight: { base: __SS_FAV_EIGHT_BASE__, unread: __SS_FAV_EIGHT_UNREAD__, notif: __SS_FAV_EIGHT_NOTIF__ },
+    eight_dark: { base: __SS_FAV_EIGHT_DARK_BASE__, unread: __SS_FAV_EIGHT_DARK_UNREAD__, notif: __SS_FAV_EIGHT_DARK_NOTIF__ },
+    pixel: { base: __SS_FAV_PIXEL_BASE__, unread: __SS_FAV_PIXEL_UNREAD__, notif: __SS_FAV_PIXEL_NOTIF__ },
+    pixel_alt: { base: __SS_FAV_PIXEL_ALT_BASE__, unread: __SS_FAV_PIXEL_ALT_UNREAD__, notif: __SS_FAV_PIXEL_ALT_NOTIF__ }
   };
   var faviconApplied = null;
   var faviconOriginalHref = null;
+  var faviconTitleObs = null;
 
-  function setFavicon(style) {
+  function setFavicon(style, state) {
     if (FAVICON_STYLES.indexOf(style) === -1) style = "default";
-    if (faviconApplied === style) return;
+    state = state || "base";
+    if (faviconApplied === style + ":" + state) return;
     if (faviconOriginalHref === null) {
       var cur = document.querySelector('link[rel="icon"], link[rel="shortcut icon"]');
       faviconOriginalHref = (cur && cur.getAttribute("href")) || "";
@@ -550,20 +554,32 @@
     link.id = "ssFavicon";
     link.rel = "icon";
     link.type = "image/png";
-    link.href = "data:image/png;base64," + FAVICON_DATA[style];
+    link.href = "data:image/png;base64," + FAVICON_DATA[style][state];
     document.head.appendChild(link);
-    faviconApplied = style;
+    faviconApplied = style + ":" + state;
+  }
+
+  function faviconState() {
+    if (!/^\(\d+\)/.test(document.title)) return "base";
+    var t = pageWindow().thread || {};
+    return t.youNotifs > 0 ? "notif" : "unread";
+  }
+
+  function updateFaviconState() {
+    var state = ssSettings.unreadFavicon && pageType.isThread ? faviconState() : "base";
+    if (state !== "base" || ssSettings.customFavicon) setFavicon(ssSettings.customFavicon ? ssSettings.faviconStyle : "default", state);
+    else if (faviconApplied) resetFavicon();
   }
 
   function resetFavicon() {
     var old = document.getElementById("ssFavicon");
     if (old) old.remove();
     faviconApplied = null;
-    if (faviconOriginalHref) {
-      var link = document.createElement("link");
+    if (faviconOriginalHref !== null) {
+      var link = document.querySelector('link[rel="icon"]') || document.createElement("link");
       link.rel = "icon";
       link.type = "image/png";
-      link.href = faviconOriginalHref;
+      link.href = faviconOriginalHref || "/favicon.ico";
       document.head.appendChild(link);
     }
   }
@@ -4002,12 +4018,20 @@
       }
     },
     // Feature: Custom Favicon
-    customFavicon: function (on) {
-      if (on) {
-        setFavicon(ssSettings.faviconStyle);
-      } else {
-        resetFavicon();
+    customFavicon: function () {
+      updateFaviconState();
+    },
+    // Feature: Unread Favicon
+    unreadFavicon: function (on) {
+      if (!pageType.isThread) return;
+      if (on && !faviconTitleObs) {
+        faviconTitleObs = new MutationObserver(updateFaviconState);
+        faviconTitleObs.observe(document.querySelector("title"), { childList: true });
+      } else if (!on && faviconTitleObs) {
+        faviconTitleObs.disconnect();
+        faviconTitleObs = null;
       }
+      updateFaviconState();
     },
     // Feature: Mascots
     enableMascots: function (on) {
