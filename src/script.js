@@ -1505,6 +1505,11 @@
     }
   }
 
+  function onCatalogAltClick(e) {
+    var menu = pageWindow().postingMenu;
+    if (e.altKey && menu && menu.useClickHotkeys && e.target.closest(".innerCatalog")) e.stopPropagation();
+  }
+
   var truncObserver = null;
   var truncWired = false;
   var truncContainer = null;
@@ -5715,6 +5720,7 @@
       rootEl.classList.toggle("is-catalog", pageType.isCatalog);
       rootEl.classList.toggle("is-thread", pageType.isThread);
       rootEl.classList.toggle("is-index", pageType.isIndex);
+      if (pageType.isCatalog) document.addEventListener("click", onCatalogAltClick, true);
       loadSettings().then(function () {
         applyAll();
         checkUpdateNotif();
