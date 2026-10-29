@@ -254,6 +254,15 @@
   margin-top: 0.2em;
 }
 
+#settingsMenu section[data-section^="ss-"] .panelContents > label,
+#settingsMenu section[data-section^="ss-"] .panelContents > div > label {
+  display: flex;
+  align-items: center;
+  padding-top: 0.2em;
+  padding-bottom: 0.2em;
+  line-height: 1;
+}
+
 .ss-sub {
   margin-left: 1.2em;
 }
