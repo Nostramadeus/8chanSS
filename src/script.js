@@ -162,6 +162,7 @@
     rememberCommentDraft: false,
     quoteThreading: false,
     hashNavigation: false,
+    hashFilter: false,
     highlightNewIds: false,
     idHlStyle: "moetext",
     alwaysShowIdCount: false,
@@ -238,6 +239,7 @@
         { key: "unreadCounter", label: "Unread Counter in Tab", title: "Shows the number of posts left below the fold in the tab title; clears at the bottom" },
         { key: "quoteThreading", label: "Quote Threading", title: "Nests replies under the post they quote instead of showing them in order" },
         { key: "hashNavigation", label: "Hash Navigation", title: "Adds a # link next to quotes and backlinks to jump straight to the post" },
+        { key: "hashFilter", label: "Image Hash Filter", title: "Hover a post and press Shift+X to hide every post with that image, here and in other threads (needs Keyboard Shortcuts)" },
         { head: "Thread Watcher" },
         { key: "noPinInCatalog", label: "Don't pin in Catalog" },
         { key: "smallFont", label: "Smaller font" },
@@ -3998,6 +4000,86 @@
     }
   }
 
+  var HASH_FILTERS_KEY = "8chanSS_hashFilters";
+  var hashFilters = [];
+  var hashFiltersLoaded = false;
+  var hashFilterObserver = null;
+
+  function loadHashFilters() {
+    if (hashFiltersLoaded) return Promise.resolve();
+    hashFiltersLoaded = true;
+    if (typeof GM === "undefined" || !GM.getValue) return Promise.resolve();
+    return GM.getValue(HASH_FILTERS_KEY, null).then(function (raw) {
+      try {
+        var list = JSON.parse(raw);
+        if (Array.isArray(list)) hashFilters = list;
+      } catch (e) { }
+    }).catch(function () { });
+  }
+
+  function saveHashFilters() {
+    if (typeof GM === "undefined" || !GM.setValue) return Promise.resolve();
+    return GM.setValue(HASH_FILTERS_KEY, JSON.stringify(hashFilters)).catch(function () { });
+  }
+
+  function postHashes(inner) {
+    var links = inner.querySelectorAll(":scope > .panelUploads a.originalNameLink");
+    var hashes = [];
+    for (var i = 0; i < links.length; i++) {
+      var m = (links[i].getAttribute("href") || "").match(/\/\.media\/([0-9a-f]+)\./i);
+      if (m) hashes.push(m[1]);
+    }
+    return hashes;
+  }
+
+  function hideByHash(cell, inner, hash) {
+    var button = document.createElement("span");
+    button.className = "unhideButton glowOnHover ss-hash-unhide";
+    button.dataset.hash = hash;
+    button.textContent = "Unhide " + cell.id + " (Image)";
+    button.addEventListener("click", onHashUnhideClick);
+    if (cell.classList.contains("opCell") && inner.nextElementSibling) inner.nextElementSibling.classList.add("hidden");
+    inner.classList.add("hidden");
+    inner.before(button);
+  }
+
+  function applyHashFilters() {
+    if (!hashFilters.length) return;
+    var cells = document.querySelectorAll(".opCell, .postCell");
+    for (var i = 0; i < cells.length; i++) {
+      var inner = cells[i].querySelector(".innerOP, .innerPost");
+      if (!inner || inner.classList.contains("hidden")) continue;
+      var hashes = postHashes(inner);
+      for (var j = 0; j < hashes.length; j++) {
+        if (hashFilters.indexOf(hashes[j]) === -1) continue;
+        hideByHash(cells[i], inner, hashes[j]);
+        break;
+      }
+    }
+  }
+
+  function unhideHashFilters(hash) {
+    var buttons = document.querySelectorAll(".ss-hash-unhide");
+    for (var i = 0; i < buttons.length; i++) {
+      if (hash && buttons[i].dataset.hash !== hash) continue;
+      var inner = buttons[i].nextElementSibling;
+      if (inner) {
+        inner.classList.remove("hidden");
+        if (inner.classList.contains("innerOP") && inner.nextElementSibling) inner.nextElementSibling.classList.remove("hidden");
+      }
+      buttons[i].remove();
+    }
+  }
+
+  function onHashUnhideClick(e) {
+    e.stopPropagation();
+    var hash = e.currentTarget.dataset.hash;
+    hashFilters = hashFilters.filter(function (h) { return h !== hash; });
+    saveHashFilters();
+    unhideHashFilters(hash);
+    applyHashFilters();
+  }
+
   var Features = {
     // Feature: Catalog Links
     catalogLinks: function (on) {
@@ -4553,6 +4635,33 @@
           hashNavObserver = null;
         }
       }
+    },
+    // Feature: Image Hash Filter
+    hashFilter: function (on) {
+      if (pageType.isCatalog) return;
+      if (!on) {
+        if (hashFilterObserver) { hashFilterObserver.disconnect(); hashFilterObserver = null; }
+        unhideHashFilters();
+        return;
+      }
+      loadHashFilters().then(applyHashFilters);
+      var posts = document.querySelector(".divPosts");
+      if (!hashFilterObserver && posts) {
+        var debounced = debounce(applyHashFilters, 50);
+        hashFilterObserver = new MutationObserver(function (mutations) {
+          for (var i = 0; i < mutations.length; i++) {
+            var nodes = mutations[i].addedNodes;
+            for (var j = 0; j < nodes.length; j++) {
+              var node = nodes[j];
+              if (node.nodeType === 1 && (node.matches(".postCell") || node.querySelector(".postCell"))) {
+                debounced();
+                return;
+              }
+            }
+          }
+        });
+        hashFilterObserver.observe(posts, { childList: true, subtree: true });
+      }
     }
   };
 
@@ -5033,6 +5142,18 @@
         return;
       }
 
+      if (ssSettings.hashFilter && e.shiftKey && !e.ctrlKey && !e.altKey && (e.key === "x" || e.key === "X")) {
+        var hovered = document.querySelector(".innerPost:hover, .innerOP:hover");
+        var hash = hovered && postHashes(hovered)[0];
+        if (!hash) return;
+        e.preventDefault();
+        if (hashFilters.indexOf(hash) === -1) hashFilters.push(hash);
+        saveHashFilters();
+        applyHashFilters();
+        showToast("Image filtered", "green", 2000);
+        return;
+      }
+
       if (!e.ctrlKey && !e.altKey && e.key === "Escape") {
         var area = document.getElementById("qrbody");
         if (area) area.value = "";
@@ -5359,6 +5480,7 @@
       [["Alt", "W"], "Watch/Unwatch Thread"],
       [["Alt", "T"], "Toggle Thread Watcher"],
       [["Shift", "T"], "Toggle Quote Threading"],
+      [["Shift", "X"], "Filter the hovered post's image"],
       [["Shift", "Click"], "Hide Thread in Catalog"],
       [["Ctrl", "Up/Down"], "Scroll between Your Replies"],
       [["Ctrl", "Shift", "Up/Down"], "Scroll between Replies to You"],
