@@ -1724,6 +1724,37 @@
   var unreadTicking = false;
   var unreadRebuildTimer = null;
   var unreadShown = Infinity;
+  var LAST_READ_KEY = "8chanSS_lastRead";
+  var lastReadData = null;
+  var lastReadPost = 0;
+
+  var saveLastRead = debounce(function () {
+    if (typeof GM === "undefined" || !GM.setValue) return;
+    GM.setValue(LAST_READ_KEY, JSON.stringify(lastReadData)).catch(function () { });
+  }, 500);
+
+  function loadLastRead() {
+    var key = scrollThreadKey();
+    if (lastReadData || !key || typeof GM === "undefined" || !GM.getValue) return Promise.resolve();
+    return GM.getValue(LAST_READ_KEY, null).then(function (raw) {
+      try { lastReadData = JSON.parse(raw) || {}; } catch (e) { lastReadData = {}; }
+      lastReadPost = (lastReadData[key] && lastReadData[key].post) || 0;
+    }).catch(function () { });
+  }
+
+  function rememberRead(cell) {
+    var key = scrollThreadKey();
+    var id = cell ? +cell.id : 0;
+    if (!lastReadData || !key || !(id > lastReadPost)) return;
+    lastReadPost = id;
+    lastReadData[key] = { post: id, t: Date.now() };
+    var keys = Object.keys(lastReadData);
+    if (keys.length > SCROLL_MAX_THREADS) {
+      keys.sort(function (a, b) { return (lastReadData[a].t || 0) - (lastReadData[b].t || 0); });
+      for (var i = 0; i < keys.length - SCROLL_MAX_THREADS; i++) delete lastReadData[keys[i]];
+    }
+    saveLastRead();
+  }
 
   // Fold the site's new-post count into ours, then zero it so it stops
   // overwriting the title; we own the countdown from that point.
@@ -1755,7 +1786,12 @@
     }
     var left = n - lo;
     // ratchet down only: scrolling back up must not raise the count
-    if (left < unreadShown) unreadShown = left;
+    if (left < unreadShown) {
+      unreadShown = left;
+      if (lo) rememberRead(unreadPosts[lo - 1]);
+    }
+    var foot = document.getElementById("linkFrontend");
+    if (n && foot && foot.getBoundingClientRect().top < window.innerHeight) rememberRead(unreadPosts[n - 1]);
     writeUnreadTitle();
   }
 
@@ -1771,7 +1807,9 @@
 
   function rebuildUnreadPosts() {
     if (!unreadActive) return;
-    unreadPosts = Array.prototype.slice.call(document.querySelectorAll(".divPosts > .postCell[id]"));
+    unreadPosts = Array.prototype.slice.call(document.querySelectorAll(".divPosts > .postCell[id]")).filter(function (cell) {
+      return +cell.id > lastReadPost;
+    });
     unreadTitle();
   }
 
@@ -1782,7 +1820,7 @@
     unreadBase = ((t && t.originalTitle) || document.title).replace(/^\(\d+\)\s*/, "");
     unreadActive = true;
     unreadShown = Infinity;
-    rebuildUnreadPosts();
+    loadLastRead().then(rebuildUnreadPosts);
     window.addEventListener("scroll", unreadOnScroll, { passive: true });
     var host = document.querySelector(".divPosts");
     if (host) {
